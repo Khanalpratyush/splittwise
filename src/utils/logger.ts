@@ -1,4 +1,8 @@
-type LogLevel = 'info' | 'warn' | 'error' | 'debug';
+type LogLevel = 'info' | 'warn' | 'error' | 'debug' | 'auth' | 'db';
+
+interface ErrorWithStack extends Error {
+  stack?: string;
+}
 
 const logger = {
   info: (message: string, data?: any) => {
@@ -11,11 +15,15 @@ const logger = {
     if (data) console.log(data);
   },
   
-  error: (message: string, error?: any) => {
+  error: (message: string, error?: unknown) => {
     console.log('\x1b[31m%s\x1b[0m', '🔴 ERROR:', message);
     if (error) {
-      console.error('Error details:', error);
-      console.error('Stack trace:', error.stack);
+      if (error instanceof Error) {
+        console.error('Error details:', error.message);
+        console.error('Stack trace:', error.stack);
+      } else {
+        console.error('Error details:', error);
+      }
     }
   },
   

@@ -50,5 +50,4 @@ export function useTheme() {
   return context;
 }
 
-// Export the context as well if needed directly
 export default ThemeContext; 

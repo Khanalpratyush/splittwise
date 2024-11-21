@@ -4,8 +4,9 @@ import { authOptions } from '../auth/[...nextauth]/route';
 import { Group } from '@/models/Group';
 import connectDB from '@/lib/mongodb';
 import logger from '@/utils/logger';
+import mongoose from 'mongoose';
 
-export async function GET(request: Request) {
+export async function GET() {
   try {
     const session = await getServerSession(authOptions);
     
@@ -13,24 +14,24 @@ export async function GET(request: Request) {
       return NextResponse.json({ message: 'Unauthorized' }, { status: 401 });
     }
 
-    logger.debug('Fetching groups for user', { userId: session.user.id });
     await connectDB();
 
-    const groups = await Group.find({
-      $or: [
-        { ownerId: session.user.id },
-        { members: session.user.id }
-      ]
-    })
-    .populate('ownerId', 'name')
-    .populate('members', 'name');
+    const userId = new mongoose.Types.ObjectId(session.user.id);
 
-    logger.info('Successfully fetched groups', { count: groups.length });
+    const groups = await Group.find({
+      'members.userId': userId
+    })
+    .populate('ownerId', 'name email')
+    .populate('members.userId', 'name email')
+    .sort({ lastActivity: -1 })
+    .lean();
+
     return NextResponse.json(groups);
+
   } catch (error) {
-    logger.error('Error fetching groups', error);
+    logger.error('Failed to fetch groups', error);
     return NextResponse.json(
-      { message: 'Error fetching groups' },
+      { message: 'Failed to fetch groups' },
       { status: 500 }
     );
   }
@@ -44,30 +45,75 @@ export async function POST(request: Request) {
       return NextResponse.json({ message: 'Unauthorized' }, { status: 401 });
     }
 
-    const body = await request.json();
-    const { name, members } = body;
+    await connectDB();
 
-    if (!name) {
+    const body = await request.json();
+    const { name, description, category, memberIds } = body;
+
+    if (!name || !memberIds?.length) {
       return NextResponse.json(
-        { message: 'Group name is required' },
+        { message: 'Missing required fields' },
         { status: 400 }
       );
     }
 
-    await connectDB();
+    // Validate memberIds are valid ObjectIds
+    const validMemberIds = memberIds.every((id: string) => 
+      mongoose.Types.ObjectId.isValid(id)
+    );
 
-    const group = await Group.create({
-      name,
-      ownerId: session.user.id,
-      members: [...new Set([...members, session.user.id])] // Include owner in members
-    });
+    if (!validMemberIds) {
+      return NextResponse.json(
+        { message: 'Invalid member IDs provided' },
+        { status: 400 }
+      );
+    }
 
-    await group.populate('ownerId members', 'name');
+    const userId = new mongoose.Types.ObjectId(session.user.id);
+
+    // Create the group document
+    const groupData = {
+      name: name.trim(),
+      description: description?.trim() || '',
+      category: category || 'other',
+      ownerId: userId,
+      members: [
+        {
+          userId: userId,
+          role: 'owner'
+        },
+        ...memberIds.map((id: string) => ({
+          userId: new mongoose.Types.ObjectId(id),
+          role: 'member'
+        }))
+      ],
+      lastActivity: new Date()
+    };
+
+    const group = await Group.create(groupData);
+
+    const populatedGroup = await Group.findById(group._id)
+      .populate('ownerId', 'name email')
+      .populate('members.userId', 'name email')
+      .lean();
 
     logger.info('Group created successfully', { groupId: group._id });
-    return NextResponse.json(group, { status: 201 });
+    return NextResponse.json(populatedGroup);
+
   } catch (error) {
-    logger.error('Error creating group', error);
+    logger.error('Error creating group', { error });
+    
+    if (error instanceof mongoose.Error.ValidationError) {
+      const validationErrors = Object.values(error.errors).map(err => err.message);
+      return NextResponse.json(
+        { 
+          message: 'Invalid group data', 
+          errors: validationErrors 
+        },
+        { status: 400 }
+      );
+    }
+
     return NextResponse.json(
       { message: 'Error creating group' },
       { status: 500 }

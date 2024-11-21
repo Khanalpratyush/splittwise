@@ -1,28 +1,59 @@
-import mongoose from 'mongoose';
-import { Schema, model, models } from 'mongoose';
+import mongoose, { Schema } from 'mongoose';
 
-const GroupSchema = new Schema({
+const memberSchema = new Schema({
+  userId: {
+    type: Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
+  },
+  role: {
+    type: String,
+    enum: ['owner', 'member'],
+    default: 'member'
+  },
+  joinedAt: {
+    type: Date,
+    default: Date.now
+  }
+});
+
+const groupSchema = new Schema({
   name: {
     type: String,
-    required: true
+    required: true,
+    trim: true
+  },
+  description: {
+    type: String,
+    trim: true,
+    default: ''
   },
   ownerId: {
     type: Schema.Types.ObjectId,
     ref: 'User',
     required: true
   },
-  members: [{
-    type: Schema.Types.ObjectId,
-    ref: 'User'
-  }],
-  createdAt: {
-    type: Date,
-    default: Date.now
+  members: [memberSchema],
+  category: {
+    type: String,
+    enum: ['home', 'trip', 'couple', 'other'],
+    default: 'other'
   },
-  updatedAt: {
+  totalExpenses: {
+    type: Number,
+    default: 0
+  },
+  lastActivity: {
     type: Date,
     default: Date.now
   }
+}, {
+  timestamps: true
 });
 
-export const Group = models.Group || model('Group', GroupSchema); 
+// Add indexes
+groupSchema.index({ ownerId: 1 });
+groupSchema.index({ 'members.userId': 1 });
+groupSchema.index({ name: 'text' });
+
+export const Group = mongoose.models.Group || mongoose.model('Group', groupSchema); 

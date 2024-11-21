@@ -18,7 +18,7 @@ export async function GET(request: Request) {
     await connectDB();
 
     const currentUser = await User.findById(session.user.id)
-      .populate<{ friends: UserDocument[] }>('friends', '-password -createdAt -updatedAt -__v')
+      .populate('friends', 'name email')
       .lean();
 
     if (!currentUser) {

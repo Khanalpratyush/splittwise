@@ -4,35 +4,52 @@ import { authOptions } from '../auth/[...nextauth]/route';
 import { Expense } from '@/models/Expense';
 import connectDB from '@/lib/mongodb';
 import logger from '@/utils/logger';
+import mongoose from 'mongoose';
+import { Activity } from '@/models/Activity';
 
 export async function GET(request: Request) {
   try {
     const session = await getServerSession(authOptions);
     
     if (!session) {
+      logger.warn('Unauthorized access attempt to expenses API');
       return NextResponse.json({ message: 'Unauthorized' }, { status: 401 });
     }
 
-    logger.debug('Fetching expenses for user', { userId: session.user.id });
+    const { searchParams } = new URL(request.url);
+    const label = searchParams.get('label');
+
     await connectDB();
+    logger.debug('Database connection successful');
 
-    // Find expenses where user is either the payer or involved in splits
-    const expenses = await Expense.find({
+    const userId = new mongoose.Types.ObjectId(session.user.id);
+
+    const query = {
       $or: [
-        { payerId: session.user.id },
-        { 'splits.userId': session.user.id }
-      ]
-    })
-    .populate('payerId', 'name')
-    .populate('groupId', 'name')
-    .sort({ date: -1 });
+        { payerId: userId },
+        { 'splits.userId': userId }
+      ],
+      ...(label && { label })
+    };
 
-    logger.info('Successfully fetched expenses', { count: expenses.length });
+    const expenses = await Expense.find(query)
+      .populate('payerId', 'name email')
+      .populate('groupId', 'name')
+      .populate('splits.userId', 'name email')
+      .sort({ date: -1 })
+      .lean();
+
+    logger.info('Successfully fetched expenses', { 
+      count: expenses.length,
+      userId: userId.toString()
+    });
+
     return NextResponse.json(expenses);
+
   } catch (error) {
-    logger.error('Error fetching expenses', error);
+    logger.error('Failed to fetch expenses', error);
     return NextResponse.json(
-      { message: 'Error fetching expenses' },
+      { message: 'Failed to fetch expenses' },
       { status: 500 }
     );
   }
@@ -47,7 +64,7 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json();
-    const { description, amount, groupId, splits, type } = body;
+    const { description, amount, groupId, splits, type, image } = body;
 
     if (!description || !amount) {
       return NextResponse.json(
@@ -58,25 +75,45 @@ export async function POST(request: Request) {
 
     await connectDB();
 
+    const userId = new mongoose.Types.ObjectId(session.user.id);
+
     const expense = await Expense.create({
       description,
       amount,
-      payerId: session.user.id,
-      groupId: groupId || null,
-      splits: type === 'split' ? splits : [],
+      payerId: userId,
+      groupId: groupId ? new mongoose.Types.ObjectId(groupId) : null,
+      splits: splits.map((split: any) => ({
+        userId: new mongoose.Types.ObjectId(split.userId),
+        amount: split.amount,
+        settled: false
+      })),
       type,
+      image,
       date: new Date()
     });
 
-    await expense.populate('payerId groupId', 'name');
+    const populatedExpense = await Expense.findById(expense._id)
+      .populate('payerId', 'name email')
+      .populate('groupId', 'name')
+      .populate('splits.userId', 'name email')
+      .lean();
 
     logger.info('Expense created successfully', { 
       expenseId: expense._id,
       type,
-      amount
+      amount,
+      splits: splits.length
     });
     
-    return NextResponse.json(expense, { status: 201 });
+    const activity = new Activity({
+      type: 'expense_created',
+      expense: expense._id,
+      actorId: session.user.id,
+      actorName: session.user.name,
+    });
+    await activity.save();
+
+    return NextResponse.json(populatedExpense);
   } catch (error) {
     logger.error('Error creating expense', error);
     return NextResponse.json(

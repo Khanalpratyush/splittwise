@@ -6,59 +6,48 @@ import logger from '@/utils/logger';
 
 export async function POST(request: Request) {
   try {
-    logger.info('Starting user signup process');
-    
     const body = await request.json();
     const { email, name, password } = body;
 
     if (!email || !name || !password) {
-      logger.warn('Missing required fields in signup', { email, name });
       return NextResponse.json(
-        { message: 'Missing required fields' },
+        { message: 'All fields are required' },
         { status: 400 }
       );
     }
 
-    logger.debug('Connecting to database for signup');
     await connectDB();
 
-    // Check if user already exists
-    const existingUser = await User.findOne({ email });
-
+    // Check if user exists
+    const existingUser = await User.findOne({ email: email.toLowerCase() });
     if (existingUser) {
-      logger.warn('Attempted to create duplicate user', { email });
       return NextResponse.json(
-        { message: 'User already exists' },
+        { message: 'Email already registered' },
         { status: 400 }
       );
     }
 
     // Hash password
-    logger.debug('Hashing password');
     const hashedPassword = await bcrypt.hash(password, 12);
 
     // Create user
-    logger.debug('Creating new user', { email, name });
     const user = await User.create({
-      email,
       name,
+      email: email.toLowerCase(),
       password: hashedPassword,
     });
 
-    logger.info('User created successfully', { userId: user._id });
-    
-    // Return success with redirect flag
     return NextResponse.json(
       { 
-        message: 'User created successfully',
-        redirect: true 
+        success: true,
+        message: 'Account created successfully'
       },
       { status: 201 }
     );
   } catch (error) {
-    logger.error('Error in signup process', error);
+    logger.error('Signup error:', error);
     return NextResponse.json(
-      { message: 'Internal server error' },
+      { message: 'Error creating account' },
       { status: 500 }
     );
   }
